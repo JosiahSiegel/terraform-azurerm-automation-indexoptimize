@@ -1,0 +1,13 @@
+let _automation_account = "${automation_account_name_lower}";
+let _stub = datatable(_ResourceId:string, StreamType:string, ResultType:string, RunbookName:string, signal:string) [];
+union isfuzzy=true
+  _stub,
+  (AutomationJobStreams
+    | where _ResourceId has _automation_account
+    | where StreamType == "Error"
+    | extend signal = "stream-error"),
+  (AutomationJobLogs
+    | where _ResourceId has _automation_account
+    | where ResultType in ("Failed", "Suspended")
+    | extend signal = ResultType)
+| summarize Failures = count() by RunbookName, signal
