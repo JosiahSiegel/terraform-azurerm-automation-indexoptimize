@@ -211,8 +211,8 @@ Analytics workspace with `log_analytics_destination_type = "Dedicated"`.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | 4.72.0 |
-| <a name="provider_local"></a> [local](#provider\_local) | 2.8.0 |
+| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | >= 4.0, < 5.0 |
+| <a name="provider_local"></a> [local](#provider\_local) | ~> 2.5 |
 
 ## Modules
 
