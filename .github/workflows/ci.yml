@@ -1,0 +1,152 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  terraform-fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+
+  terraform-validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        path:
+          - "."
+          - "examples/minimal"
+          - "examples/backwards-compat"
+          - "examples/failure-alert"
+          - "examples/existing-account"
+    name: validate (${{ matrix.path }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: |
+          cd ${{ matrix.path }}
+          terraform init
+          terraform validate
+
+  terraform-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform init
+      - run: terraform test
+
+  terraform-plan-examples:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        path:
+          - "examples/minimal"
+          - "examples/backwards-compat"
+          - "examples/failure-alert"
+          - "examples/existing-account"
+    name: plan (${{ matrix.path }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: terraform init
+        run: |
+          cd ${{ matrix.path }}
+          terraform init
+      - name: terraform plan
+        # Best-effort plan without Azure credentials. The Azure provider will
+        # fail during authentication, but this step catches HCL errors that
+        # terraform validate misses (e.g. dynamic expression evaluation,
+        # for_each key types, data source config). We allow auth failures
+        # (exit 1) but fail on any other error pattern.
+        env:
+          ARM_SUBSCRIPTION_ID: "00000000-0000-0000-0000-000000000000"
+          ARM_TENANT_ID: "00000000-0000-0000-0000-000000000000"
+          ARM_CLIENT_ID: "00000000-0000-0000-0000-000000000000"
+          ARM_CLIENT_SECRET: "dummy"
+          ARM_SKIP_PROVIDER_REGISTRATION: "true"
+        run: |
+          cd ${{ matrix.path }}
+          set +e
+          terraform plan -input=false -lock=false -refresh=false 2>&1 | tee plan.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
+          # Accept auth-related failures; fail on HCL/module errors
+          if [ $EXIT_CODE -ne 0 ]; then
+            if grep -qiE "(building account|authenticating|token|credential|subscription.*not found|client secret|unauthorized|access token)" plan.log; then
+              echo "Plan failed due to missing Azure credentials (expected in public CI)."
+              exit 0
+            else
+              echo "Plan failed with an unexpected error (likely HCL or module issue)."
+              exit 1
+            fi
+          fi
+
+  tflint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+      - run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: tflint --recursive --format compact
+
+  checkov:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          quiet: true
+          framework: terraform
+          skip_check: CKV_AZURE_39
+          soft_fail: true
+
+  powershell-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate IndexOptimize.ps1 syntax
+        shell: pwsh
+        run: |
+          $errors = $null
+          $null = [System.Management.Automation.PSParser]::Tokenize(
+            (Get-Content -Raw "${{ github.workspace }}/scripts/IndexOptimize.ps1"),
+            [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            Write-Output "Syntax errors found in IndexOptimize.ps1:"
+            $errors | ForEach-Object { Write-Output $_.Message }
+            exit 1
+          }
+          Write-Output "IndexOptimize.ps1 parsed successfully."
+
+  terraform-docs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: terraform-docs/gh-actions@v1.3.0
+        with:
+          working-dir: .
+          output-file: README.md
+          output-method: inject
+          git-push: "false"
+          fail-on-diff: true

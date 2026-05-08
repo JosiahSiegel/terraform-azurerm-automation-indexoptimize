@@ -1,16 +1,17 @@
 output "id" {
   description = "The ID of the Automation Account."
-  value       = azurerm_automation_account.default.id
+  value       = local.automation_account_id
 }
 
 output "name" {
   description = "The name of the Automation Account."
-  value       = azurerm_automation_account.default.name
+  value       = local.automation_account_name
 }
 
 output "identity" {
   description = "The identity of the Automation Account."
-  value       = azurerm_automation_account.default.identity
+  value       = var.create_automation_account ? azurerm_automation_account.default[0].identity : data.azurerm_automation_account.existing[0].identity
+  sensitive   = true
 }
 
 # Narrow projection: expose only id, name, application_id. Marked sensitive

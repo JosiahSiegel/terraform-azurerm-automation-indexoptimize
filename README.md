@@ -6,6 +6,7 @@
 > maintenance objects.
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![Terraform Registry](https://img.shields.io/badge/terraform-registry-blue)](https://registry.terraform.io/modules/JosiahSiegel/automation-indexoptimize/azurerm/latest)
 
 ## Why this module exists
 
@@ -55,7 +56,7 @@ This module takes a different approach:
   registered.
 - Azure SQL Database servers with **Microsoft Entra (Azure AD) admin**
   configured (the module's MI authenticates against this).
-- Terraform `>= 1.5.0`.
+- Terraform `>= 1.9.0`.
 - AzureRM provider `>= 4.0, < 5.0`.
 
 ## Quick start
@@ -121,6 +122,49 @@ SELECT name FROM sys.objects WHERE type = 'P' AND name IN ('IndexOptimize','Comm
 -- (no rows)
 ```
 
+## Existing Automation Account
+
+If you already have an Automation Account and want the module to provision
+runbooks, schedules, and modules into it instead of creating a new one, set
+`create_automation_account = false` and provide the existing account's name
+and resource group:
+
+```hcl
+module "indexoptimize" {
+  source  = "JosiahSiegel/automation-indexoptimize/azurerm"
+  version = "~> 1.0"
+
+  create_automation_account = false
+  existing_automation_account_name                = "my-existing-automation-account"
+  existing_automation_account_resource_group_name = "rg-existing-automation"
+
+  name                = "my-existing-automation-account"
+  location            = "eastus"
+  resource_group_name = "rg-existing-automation"
+
+  enable_index_optimize = true
+
+  index_optimize_targets = {
+    "mydb-weekly" = {
+      sql_server = "myserver.database.windows.net"
+      database   = "MyDatabase"
+      week_days  = ["Saturday"]
+      start_time = "2026-06-06T03:00:00-04:00"
+    }
+  }
+
+  tags = {
+    Environment = "Prod"
+    ManagedBy   = "Terraform"
+  }
+}
+```
+
+When `create_automation_account = false`, the module skips
+`azurerm_automation_account` creation and looks up the existing account via
+`data.azurerm_automation_account`. All runbooks, schedules, modules, and
+other resources are still created inside the referenced account.
+
 ## With failure alerting
 
 ```hcl
@@ -154,16 +198,22 @@ Analytics workspace with `log_analytics_destination_type = "Dedicated"`.
 
 ## Inputs
 
+<!-- BEGIN_TF_DOCS -->
 | Name | Type | Default | Description |
 |---|---|---|---|
 | `name` | `string` | n/a | Automation Account name (6-50 chars, starts with letter, alphanumeric + hyphens). |
 | `location` | `string` | n/a | Azure region. |
 | `resource_group_name` | `string` | n/a | Existing RG. |
+| `create_automation_account` | `bool` | `true` | If false, use an existing account (requires `existing_*` vars). |
+| `existing_automation_account_name` | `string` | `""` | Name of existing account when `create_automation_account = false`. |
+| `existing_automation_account_resource_group_name` | `string` | `""` | RG of existing account when `create_automation_account = false`. |
+| `public_network_access_enabled` | `bool` | `false` | Enable public network access on the Automation Account. |
 | `tags` | `map(string)` | `{}` | Tags applied to all created resources. |
 | `enable_index_optimize` | `bool` | `false` | If true, create the built-in IndexOptimize runbook + auto-import the SqlServer module into the PS 7.x slot. |
 | `index_optimize_targets` | `map(object)` | `{}` | Per-target schedules. See [target shape](#target-shape). |
 | `index_optimize_log_verbose` | `bool` | `false` | Verbose logging on the IndexOptimize runbook. |
 | `index_optimize_log_progress` | `bool` | `false` | Progress logging on the IndexOptimize runbook. |
+| `log_activity_trace_level` | `string` | `"Trace"` | Activity trace level for the IndexOptimize runbook. Allowed: Trace, Debug, Information, Warning, Error, Critical, None. |
 | `schedules` | `map(object)` | `{}` | Caller-supplied schedules; merged with derived schedules from `index_optimize_targets`. |
 | `job_schedules` | `map(object)` | `{}` | Caller-supplied job schedules; merged with derived ones. |
 | `runbooks` | `map(object)` | `{}` | Custom runbooks (PowerShell, PowerShellWorkflow, Python, etc). |
@@ -172,7 +222,7 @@ Analytics workspace with `log_analytics_destination_type = "Dedicated"`.
 | `connection_types` | `map(map(string))` | `{}` | Custom connection types. |
 | `service_principal_connections` | `map(object)` | `{}` | SP connection definitions. |
 | `certificates` | `map(object)` | `{}` | Certificate assets. |
-| `teams_webhook_url` | `string` (sensitive) | `""` | If non-empty, deploys a Teams notification webhook. |
+| `teams_webhook_url` | `string` (sensitive) | `""` | If non-empty, deploys a Teams notification webhook. **WARNING:** webhook URLs are stored in Terraform state (`sensitive=true` helps at plan-time but the state file still contains them). |
 | `teams_webhook_expiry` | `string` | `"2030-12-31T00:00:00Z"` | Teams webhook expiry. |
 
 ### Target shape
@@ -196,18 +246,19 @@ to the IndexOptimize runbook.
 
 ## Outputs
 
-| Name | Description |
-|---|---|
-| `id` | Automation Account resource ID. |
-| `name` | Automation Account name. |
-| `identity` | Identity block (principal_id, tenant_id). |
-| `index_optimize_runbook_name` | Runbook name (or `null` if disabled). |
-| `runbooks` | `{id, name}` per custom runbook. |
-| `schedules` | `{id, name}` per schedule. |
-| `job_schedules` | `{id}` per job schedule. |
-| `certificates` | `{id, name}` per certificate. |
-| `service_principal_connections` | `{id, name, application_id}` per connection (sensitive). |
-| `teams_webhook_uri` | Teams webhook URI (sensitive, `null` if disabled). |
+| Name | Description | Sensitive |
+|---|---|---|
+| `id` | Automation Account resource ID. | no |
+| `name` | Automation Account name. | no |
+| `identity` | Identity block (principal_id, tenant_id). | **yes** |
+| `index_optimize_runbook_name` | Runbook name (or `null` if disabled). | no |
+| `runbooks` | `{id, name}` per custom runbook. | no |
+| `schedules` | `{id, name}` per schedule. | no |
+| `job_schedules` | `{id}` per job schedule. | no |
+| `certificates` | `{id, name}` per certificate. | no |
+| `service_principal_connections` | `{id, name, application_id}` per connection (sensitive). | **yes** |
+| `teams_webhook_uri` | Teams webhook URI (sensitive, `null` if disabled). | **yes** |
+<!-- END_TF_DOCS -->
 
 ## Architecture
 
@@ -279,6 +330,16 @@ These are documented in source comments but worth highlighting up front:
 6. **Schedule `start_time` is `ignore_changes`d.** The provider has a
    timezone+offset round-trip drift bug; we hide it. To actually update a
    schedule's start time, taint or `-replace=` it.
+
+7. **Webhook URLs in state.** `teams_webhook_url` is marked `sensitive` so it
+   does not appear in plan output, but Terraform state files are not encrypted
+   by default. Store state in a secure backend (e.g., Azure Storage with
+   encryption, Terraform Cloud) and restrict access.
+
+8. **Public network access is disabled by default.** New Automation Accounts
+   are created with `public_network_access_enabled = false`. Enable only if
+   your runbooks need to reach public endpoints and you are not using
+   private endpoints.
 
 ## Onboarding a new database to an existing deployment
 

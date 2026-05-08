@@ -1,3 +1,26 @@
+variable "create_automation_account" {
+  description = "Whether to create a new automation account. If false, an existing account is referenced via existing_automation_account_name and existing_automation_account_resource_group_name."
+  type        = bool
+  default     = true
+
+  validation {
+    condition     = var.create_automation_account || (var.existing_automation_account_name != "" && var.existing_automation_account_resource_group_name != "")
+    error_message = "existing_automation_account_name and existing_automation_account_resource_group_name are required when create_automation_account is false."
+  }
+}
+
+variable "existing_automation_account_name" {
+  description = "The name of an existing automation account to use when create_automation_account is false."
+  type        = string
+  default     = ""
+}
+
+variable "existing_automation_account_resource_group_name" {
+  description = "The resource group name of an existing automation account to use when create_automation_account is false."
+  type        = string
+  default     = ""
+}
+
 variable "name" {
   description = "The name of the automation account."
   type        = string
@@ -18,6 +41,12 @@ variable "location" {
 variable "resource_group_name" {
   description = "The name of the resource group in which to create the automation account."
   type        = string
+}
+
+variable "public_network_access_enabled" {
+  description = "Whether public network access is enabled for the Automation Account. Defaults to false for security."
+  type        = bool
+  default     = false
 }
 
 variable "tags" {
@@ -161,12 +190,29 @@ variable "index_optimize_log_progress" {
 variable "index_optimize_targets" {
   description = "Per-target IndexOptimize configuration. Map key becomes the schedule/job suffix (indexoptimize-<key>)."
   type = map(object({
-    sql_server  = string
-    database    = string
-    week_days   = list(string)
-    start_time  = string
-    timezone    = optional(string, "America/New_York")
-    description = optional(string, "")
+    sql_server                            = string
+    database                              = string
+    week_days                             = list(string)
+    start_time                            = string
+    timezone                              = optional(string, "America/New_York")
+    description                           = optional(string, "")
+    fragmentation_level_1                 = optional(number, 5)
+    fragmentation_level_2                 = optional(number, 30)
+    fragmentation_low                     = optional(string, null)
+    fragmentation_medium                  = optional(string, "INDEX_REBUILD_ONLINE")
+    fragmentation_high                    = optional(string, "INDEX_REBUILD_ONLINE,INDEX_REBUILD_OFFLINE")
+    sort_in_tempdb                        = optional(string, null)
+    max_dop                               = optional(number, null)
+    fill_factor                           = optional(number, null)
+    update_statistics                     = optional(string, "ALL")
+    only_modified_statistics              = optional(string, "Y")
+    time_limit_minutes                    = optional(number, null)
+    wait_at_low_priority_max_duration     = optional(number, 10)
+    wait_at_low_priority_abort_after_wait = optional(string, "SELF")
+    lock_timeout                          = optional(number, 600)
+    lock_message_severity                 = optional(number, 10)
+    log_to_table                          = optional(string, "N")
+    execute_as_user                       = optional(string, null)
   }))
   default = {}
 }

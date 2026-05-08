@@ -4,6 +4,30 @@ All notable changes to this module are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Existing Automation Account support.** New variables `create_automation_account`,
+  `existing_automation_account_name`, and `existing_automation_account_resource_group_name`
+  allow the module to use an existing Automation Account instead of always creating one.
+- `public_network_access_enabled` variable (default `false`) on the Automation Account.
+- `log_activity_trace_level` variable for the IndexOptimize runbook (default `"Trace"`).
+- `providers.tf` at root declaring the `azurerm` provider.
+- GitHub Actions CI workflow (`.github/workflows/ci.yml`) with `terraform-fmt`,
+  `terraform-validate`, `tflint`, `checkov`, and `terraform-docs` jobs.
+- `examples/failure-alert/` — complete example using the `failure-alert` submodule.
+- `.claude/` added to `.gitignore`.
+
+### Changed
+- Terraform `required_version` bumped from `>= 1.5.0` to `>= 1.9.0` in root,
+  `examples/minimal/`, and `modules/failure-alert/`.
+- `identity` output now marked `sensitive = true`.
+
+### Security
+- Default `public_network_access_enabled = false` on new Automation Accounts.
+- README warning added: `teams_webhook_url` values are stored in Terraform state
+  even though the variable is `sensitive`.
+
 ## [1.0.0] - 2026-05-07
 
 Initial public release.
