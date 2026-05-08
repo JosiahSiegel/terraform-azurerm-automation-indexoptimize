@@ -42,7 +42,7 @@ jobs:
       - run: terraform init
       - run: terraform test
 
-  terraform-plan-examples:
+  terraform-test-examples:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -52,7 +52,7 @@ jobs:
           - "examples/backwards-compat"
           - "examples/failure-alert"
           - "examples/existing-account"
-    name: plan (${{ matrix.path }})
+    name: test (${{ matrix.path }})
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -60,35 +60,10 @@ jobs:
         run: |
           cd ${{ matrix.path }}
           terraform init
-      - name: terraform plan
-        # Best-effort plan without Azure credentials. The Azure provider will
-        # fail during authentication, but this step catches HCL errors that
-        # terraform validate misses (e.g. dynamic expression evaluation,
-        # for_each key types, data source config). We allow auth failures
-        # (exit 1) but fail on any other error pattern.
-        env:
-          ARM_SUBSCRIPTION_ID: "00000000-0000-0000-0000-000000000000"
-          ARM_TENANT_ID: "00000000-0000-0000-0000-000000000000"
-          ARM_CLIENT_ID: "00000000-0000-0000-0000-000000000000"
-          ARM_CLIENT_SECRET: "dummy"
-          ARM_SKIP_PROVIDER_REGISTRATION: "true"
+      - name: terraform test
         run: |
           cd ${{ matrix.path }}
-          set +e
-          terraform plan -input=false -lock=false -refresh=false 2>&1 | tee plan.log
-          EXIT_CODE=${PIPESTATUS[0]}
-          set -e
-
-          # Accept auth-related failures; fail on HCL/module errors
-          if [ $EXIT_CODE -ne 0 ]; then
-            if grep -qiE "(building account|authenticating|token|credential|subscription.*not found|client secret|unauthorized|access token)" plan.log; then
-              echo "Plan failed due to missing Azure credentials (expected in public CI)."
-              exit 0
-            else
-              echo "Plan failed with an unexpected error (likely HCL or module issue)."
-              exit 1
-            fi
-          fi
+          terraform test
 
   tflint:
     runs-on: ubuntu-latest

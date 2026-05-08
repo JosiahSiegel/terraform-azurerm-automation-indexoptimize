@@ -26,6 +26,7 @@ terraform.rc
 # Terraform plan files
 *.tfplan
 tfplan
+*.log
 
 # OS / editor cruft
 .DS_Store
