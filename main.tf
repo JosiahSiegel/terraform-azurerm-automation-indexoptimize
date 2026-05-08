@@ -1,4 +1,6 @@
 resource "azurerm_automation_account" "default" {
+  count = var.create_automation_account ? 1 : 0
+
   name                = var.name
   location            = var.location
   resource_group_name = lower(var.resource_group_name)
@@ -6,9 +8,29 @@ resource "azurerm_automation_account" "default" {
 
   sku_name = "Basic"
 
+  public_network_access_enabled = var.public_network_access_enabled
+
   identity {
     type = "SystemAssigned"
   }
+}
+
+moved {
+  from = azurerm_automation_account.default
+  to   = azurerm_automation_account.default[0]
+}
+
+data "azurerm_automation_account" "existing" {
+  count = var.create_automation_account ? 0 : 1
+
+  name                = var.existing_automation_account_name
+  resource_group_name = var.existing_automation_account_resource_group_name
+}
+
+locals {
+  automation_account_id   = var.create_automation_account ? azurerm_automation_account.default[0].id : data.azurerm_automation_account.existing[0].id
+  automation_account_name = var.create_automation_account ? azurerm_automation_account.default[0].name : data.azurerm_automation_account.existing[0].name
+  automation_account_rg   = var.create_automation_account ? lower(var.resource_group_name) : lower(data.azurerm_automation_account.existing[0].resource_group_name)
 }
 
 locals {
@@ -31,8 +53,8 @@ resource "azurerm_automation_runbook" "webhook" {
   for_each                = local.webhook_keys
   name                    = "Notify-Teams"
   location                = var.location
-  resource_group_name     = lower(var.resource_group_name)
-  automation_account_name = azurerm_automation_account.default.name
+  resource_group_name     = local.automation_account_rg
+  automation_account_name = local.automation_account_name
   log_verbose             = true
   log_progress            = true
   description             = "Send a webhook notification to a Microsoft Teams channel."
@@ -45,8 +67,8 @@ resource "azurerm_automation_runbook" "webhook" {
 resource "azurerm_automation_webhook" "default" {
   for_each                = local.webhook_keys
   name                    = "Notify-Teams-Webhook"
-  resource_group_name     = lower(var.resource_group_name)
-  automation_account_name = azurerm_automation_account.default.name
+  resource_group_name     = local.automation_account_rg
+  automation_account_name = local.automation_account_name
   expiry_time             = var.teams_webhook_expiry
   enabled                 = true
   runbook_name            = azurerm_automation_runbook.webhook[each.key].name
@@ -88,9 +110,9 @@ locals {
 # longer flows here - it goes to the PS7.x slot below (see B1 fix).
 resource "azurerm_automation_module" "modules" {
   for_each                = var.automation_modules
-  automation_account_name = azurerm_automation_account.default.name
+  automation_account_name = local.automation_account_name
   name                    = each.key
-  resource_group_name     = lower(var.resource_group_name)
+  resource_group_name     = local.automation_account_rg
 
   module_link {
     uri = each.value
@@ -117,7 +139,7 @@ resource "azurerm_automation_module" "modules" {
 # Use `terraform apply -replace=...` to force re-import on URI change.
 resource "azurerm_automation_powershell72_module" "modules" {
   for_each              = local.effective_ps72_modules
-  automation_account_id = azurerm_automation_account.default.id
+  automation_account_id = local.automation_account_id
   name                  = each.key
 
   module_link {
@@ -127,10 +149,10 @@ resource "azurerm_automation_powershell72_module" "modules" {
 
 resource "azurerm_automation_connection_type" "connection_types" {
   for_each                = var.connection_types
-  automation_account_name = azurerm_automation_account.default.name
+  automation_account_name = local.automation_account_name
   is_global               = true
   name                    = each.key
-  resource_group_name     = lower(var.resource_group_name)
+  resource_group_name     = local.automation_account_rg
 
   dynamic "field" {
     for_each = each.value
@@ -148,9 +170,9 @@ resource "azurerm_automation_connection_type" "connection_types" {
 # Service Principal Connections
 resource "azurerm_automation_connection_service_principal" "service_principal_connections" {
   for_each                = var.service_principal_connections
-  automation_account_name = azurerm_automation_account.default.name
+  automation_account_name = local.automation_account_name
   name                    = each.key
-  resource_group_name     = lower(var.resource_group_name)
+  resource_group_name     = local.automation_account_rg
   application_id          = each.value.application_id
   certificate_thumbprint  = each.value.certificate_thumbprint
   subscription_id         = each.value.subscription_id
@@ -161,10 +183,10 @@ resource "azurerm_automation_connection_service_principal" "service_principal_co
 # Runbooks
 resource "azurerm_automation_runbook" "runbooks" {
   for_each                = var.runbooks
-  automation_account_name = azurerm_automation_account.default.name
+  automation_account_name = local.automation_account_name
   name                    = each.key
   location                = var.location
-  resource_group_name     = lower(var.resource_group_name)
+  resource_group_name     = local.automation_account_rg
   runbook_type            = each.value.runbook_type
   description             = each.value.description
 
@@ -216,8 +238,25 @@ locals {
       runbook_name  = length(azurerm_automation_runbook.index_optimize) > 0 ? azurerm_automation_runbook.index_optimize["default"].name : ""
       schedule_name = "indexoptimize-${k}"
       parameters = {
-        sqlserver = t.sql_server
-        database  = t.database
+        sqlserver                       = t.sql_server
+        database                        = t.database
+        fragmentationlevel1             = t.fragmentation_level_1
+        fragmentationlevel2             = t.fragmentation_level_2
+        fragmentationlow                = t.fragmentation_low == null ? "" : t.fragmentation_low
+        fragmentationmedium             = t.fragmentation_medium
+        fragmentationhigh               = t.fragmentation_high
+        sortintempdb                    = t.sort_in_tempdb == null ? "" : t.sort_in_tempdb
+        maxdop                          = t.max_dop == null ? "" : tostring(t.max_dop)
+        fillfactor                      = t.fill_factor == null ? "" : tostring(t.fill_factor)
+        updatestatistics                = t.update_statistics
+        onlymodifiedstatistics          = t.only_modified_statistics
+        timelimitminutes                = t.time_limit_minutes == null ? "" : tostring(t.time_limit_minutes)
+        waitatlowprioritymaxduration    = t.wait_at_low_priority_max_duration
+        waitatlowpriorityabortafterwait = t.wait_at_low_priority_abort_after_wait
+        locktimeout                     = t.lock_timeout
+        lockmessageseverity             = t.lock_message_severity
+        logtotable                      = t.log_to_table
+        executeasuser                   = t.execute_as_user == null ? "" : t.execute_as_user
       }
     }
   }
@@ -229,9 +268,9 @@ locals {
 # Schedules
 resource "azurerm_automation_schedule" "schedules" {
   for_each                = local.effective_schedules
-  automation_account_name = azurerm_automation_account.default.name
+  automation_account_name = local.automation_account_name
   name                    = each.key
-  resource_group_name     = lower(var.resource_group_name)
+  resource_group_name     = local.automation_account_rg
   frequency               = each.value.frequency
   timezone                = each.value.timezone
   description             = each.value.description
@@ -253,8 +292,8 @@ resource "azurerm_automation_schedule" "schedules" {
 # Job Schedules
 resource "azurerm_automation_job_schedule" "job_schedules" {
   for_each                = local.effective_job_schedules
-  automation_account_name = azurerm_automation_account.default.name
-  resource_group_name     = lower(var.resource_group_name)
+  automation_account_name = local.automation_account_name
+  resource_group_name     = local.automation_account_rg
   runbook_name            = each.value.runbook_name
   schedule_name           = each.value.schedule_name
   parameters              = each.value.parameters
@@ -263,9 +302,9 @@ resource "azurerm_automation_job_schedule" "job_schedules" {
 # Certificates
 resource "azurerm_automation_certificate" "certificates" {
   for_each                = var.certificates
-  automation_account_name = azurerm_automation_account.default.name
+  automation_account_name = local.automation_account_name
   name                    = each.key
-  resource_group_name     = lower(var.resource_group_name)
+  resource_group_name     = local.automation_account_rg
   base64                  = each.value.base64
   description             = each.value.description
   exportable              = each.value.exportable
@@ -296,8 +335,8 @@ resource "azurerm_automation_runbook" "index_optimize" {
   for_each                = local.index_optimize_map
   name                    = "IndexOptimize"
   location                = var.location
-  resource_group_name     = lower(var.resource_group_name)
-  automation_account_name = azurerm_automation_account.default.name
+  resource_group_name     = local.automation_account_rg
+  automation_account_name = local.automation_account_name
   log_verbose             = var.index_optimize_log_verbose
   log_progress            = var.index_optimize_log_progress
   description             = "Ola Hallengren IndexOptimize wrapper. Targets a single SQL database via parameters (SqlServer, Database, SQLCredentialName)."

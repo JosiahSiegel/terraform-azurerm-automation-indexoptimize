@@ -1,0 +1,127 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  terraform-fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+
+  terraform-validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        path:
+          - "."
+          - "examples/minimal"
+          - "examples/backwards-compat"
+          - "examples/failure-alert"
+          - "examples/existing-account"
+    name: validate (${{ matrix.path }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: |
+          cd ${{ matrix.path }}
+          terraform init
+          terraform validate
+
+  terraform-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform init
+      - run: terraform test
+
+  terraform-test-examples:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        path:
+          - "examples/minimal"
+          - "examples/backwards-compat"
+          - "examples/failure-alert"
+          - "examples/existing-account"
+    name: test (${{ matrix.path }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: terraform init
+        run: |
+          cd ${{ matrix.path }}
+          terraform init
+      - name: terraform test
+        run: |
+          cd ${{ matrix.path }}
+          terraform test
+
+  tflint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+      - run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: tflint --recursive --format compact
+
+  checkov:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          quiet: true
+          framework: terraform
+          skip_check: CKV_AZURE_39
+          soft_fail: true
+
+  powershell-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate IndexOptimize.ps1 syntax
+        shell: pwsh
+        run: |
+          $errors = $null
+          $null = [System.Management.Automation.PSParser]::Tokenize(
+            (Get-Content -Raw "${{ github.workspace }}/scripts/IndexOptimize.ps1"),
+            [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            Write-Output "Syntax errors found in IndexOptimize.ps1:"
+            $errors | ForEach-Object { Write-Output $_.Message }
+            exit 1
+          }
+          Write-Output "IndexOptimize.ps1 parsed successfully."
+
+  terraform-docs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: terraform-docs/gh-actions@v1.3.0
+        with:
+          working-dir: .
+          output-file: README.md
+          output-method: inject
+          git-push: "false"
+          fail-on-diff: true

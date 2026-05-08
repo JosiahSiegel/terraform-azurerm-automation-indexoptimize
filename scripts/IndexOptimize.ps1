@@ -66,7 +66,25 @@ param (
     [string] $SqlServer,
 
     [Parameter(Mandatory = $true)]
-    [string] $Database
+    [string] $Database,
+
+    [int]    $FragmentationLevel1                = 5,
+    [int]    $FragmentationLevel2                = 30,
+    [string] $FragmentationLow                   = "",
+    [string] $FragmentationMedium                = "INDEX_REBUILD_ONLINE",
+    [string] $FragmentationHigh                  = "INDEX_REBUILD_ONLINE,INDEX_REBUILD_OFFLINE",
+    [string] $SortInTempdb                       = "",
+    [int]    $MaxDOP                             = -1,
+    [int]    $FillFactor                         = -1,
+    [string] $UpdateStatistics                   = "ALL",
+    [string] $OnlyModifiedStatistics             = "Y",
+    [int]    $TimeLimitMinutes                   = -1,
+    [int]    $WaitAtLowPriorityMaxDuration       = 10,
+    [string] $WaitAtLowPriorityAbortAfterWait    = "SELF",
+    [int]    $LockTimeout                        = 600,
+    [int]    $LockMessageSeverity                = 10,
+    [string] $LogToTable                         = "N",
+    [string] $ExecuteAsUser                      = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -79,7 +97,7 @@ $SentinelValue = '1'
 # Cap the index defrag at 2 hours: Ola exits gracefully at @TimeLimit, and the
 # .NET CommandTimeout has a small buffer above so the connection isn't killed
 # mid-graceful-exit.
-$IndexOptimizeTimeLimitMinutes = 120    # 2 hours - Ola's internal cap
+$IndexOptimizeTimeLimitMinutes = $TimeLimitMinutes -ge 0 ? $TimeLimitMinutes : 120    # 2 hours - Ola's internal cap
 $SqlCommandTimeoutSeconds      = 7800   # 130 min - .NET cap, 10 min buffer
 
 # ---------- Embedded Ola SQL (MIT, copyright (c) 2025 Ola Hallengren) ---------
@@ -3090,24 +3108,47 @@ try {
 
     # --- Phase 4: run IndexOptimize ---
     Write-Output "Phase 4: executing dbo.IndexOptimize against $Database on $SqlServer."
+
+    # Build optional parameter fragments. Empty string / -1 means omit so Ola
+    # uses its own default.
+    $optFragmentationLow                = ($FragmentationLow                -ne '') ? "@FragmentationLow                = '$FragmentationLow',"                : ""
+    $optFragmentationMedium             = ($FragmentationMedium             -ne '') ? "@FragmentationMedium             = '$FragmentationMedium',"             : ""
+    $optFragmentationHigh               = ($FragmentationHigh               -ne '') ? "@FragmentationHigh               = '$FragmentationHigh',"               : ""
+    $optSortInTempdb                    = ($SortInTempdb                    -ne '') ? "@SortInTempdb                    = '$SortInTempdb',"                    : ""
+    $optMaxDOP                          = ($MaxDOP                          -ge 0)  ? "@MaxDOP                          = $MaxDOP,"                          : ""
+    $optFillFactor                      = ($FillFactor                      -ge 0)  ? "@FillFactor                      = $FillFactor,"                      : ""
+    $optUpdateStatistics                = ($UpdateStatistics                -ne '') ? "@UpdateStatistics                = '$UpdateStatistics',"                : ""
+    $optOnlyModifiedStatistics          = ($OnlyModifiedStatistics          -ne '') ? "@OnlyModifiedStatistics          = '$OnlyModifiedStatistics',"          : ""
+    $optWaitAtLowPriorityMaxDuration    = ($WaitAtLowPriorityMaxDuration    -ge 0)  ? "@WaitAtLowPriorityMaxDuration    = $WaitAtLowPriorityMaxDuration,"    : ""
+    $optWaitAtLowPriorityAbortAfterWait = ($WaitAtLowPriorityAbortAfterWait -ne '') ? "@WaitAtLowPriorityAbortAfterWait = '$WaitAtLowPriorityAbortAfterWait'," : ""
+    $optLockTimeout                     = ($LockTimeout                     -ge 0)  ? "@LockTimeout                     = $LockTimeout,"                     : ""
+    $optLockMessageSeverity             = ($LockMessageSeverity             -ge 0)  ? "@LockMessageSeverity             = $LockMessageSeverity,"             : ""
+    $optTimeLimit                       = "@TimeLimit                       = $IndexOptimizeTimeLimitMinutes,"
+    $optLogToTable                      = ($LogToTable                      -ne '') ? "@LogToTable                      = '$LogToTable',"                      : ""
+    $optExecuteAsUser                   = ($ExecuteAsUser                   -ne '') ? "@ExecuteAsUser                   = '$ExecuteAsUser',"                   : ""
+
     $indexOptimizeCall = @"
 EXECUTE dbo.IndexOptimize
     @Databases                       = 'USER_DATABASES',
     @Resumable                       = 'N',
     @Indexes                         = 'ALL_INDEXES',
-    @FragmentationLow                = NULL,
-    @FragmentationMedium             = 'INDEX_REBUILD_ONLINE',
-    @FragmentationHigh               = 'INDEX_REBUILD_ONLINE,INDEX_REBUILD_OFFLINE',
-    @FragmentationLevel1             = 5,
-    @FragmentationLevel2             = 30,
-    @UpdateStatistics                = 'ALL',
-    @OnlyModifiedStatistics          = 'Y',
-    @WaitAtLowPriorityMaxDuration    = 10,
-    @WaitAtLowPriorityAbortAfterWait = 'SELF',
-    @LockTimeout                     = 600,
-    @LockMessageSeverity             = 10,
-    @TimeLimit                       = $IndexOptimizeTimeLimitMinutes,
-    @LogToTable                      = 'N',
+    $optFragmentationLow
+    $optFragmentationMedium
+    $optFragmentationHigh
+    @FragmentationLevel1             = $FragmentationLevel1,
+    @FragmentationLevel2             = $FragmentationLevel2,
+    $optUpdateStatistics
+    $optOnlyModifiedStatistics
+    $optWaitAtLowPriorityMaxDuration
+    $optWaitAtLowPriorityAbortAfterWait
+    $optLockTimeout
+    $optLockMessageSeverity
+    $optTimeLimit
+    $optLogToTable
+    $optExecuteAsUser
+    $optSortInTempdb
+    $optMaxDOP
+    $optFillFactor
     @Execute                         = 'Y';
 "@
     Invoke-SqlBatch -Connection $conn -Sql $indexOptimizeCall -TimeoutSeconds $SqlCommandTimeoutSeconds

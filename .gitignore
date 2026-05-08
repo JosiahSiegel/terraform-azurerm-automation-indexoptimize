@@ -23,9 +23,10 @@ override.tf.json
 .terraformrc
 terraform.rc
 
-# Plan files
+# Terraform plan files
 *.tfplan
 tfplan
+*.log
 
 # OS / editor cruft
 .DS_Store
@@ -34,7 +35,12 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+*~
 
-# Lock files: generally CHECK IN at root, but we ignore example-level lock
-# files since they're regenerated on init.
+# Lock files: consumers of a registry module generate their own lock files,
+# so ignore lock files at the root and within examples.
+.terraform.lock.hcl
 examples/**/.terraform.lock.hcl
+
+# Claude / AI assistant artifacts
+.claude/

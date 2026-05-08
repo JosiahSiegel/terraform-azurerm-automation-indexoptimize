@@ -42,6 +42,45 @@ module "indexoptimize" {
   }
 }
 
+# ---------------------------------------------------------------------------
+# Example: using an existing Automation Account
+# ---------------------------------------------------------------------------
+# Uncomment and adjust the following to use an existing account instead of
+# creating one. When create_automation_account = false, the module skips
+# azurerm_automation_account creation and looks up the existing account via
+# data source. The name, location, and resource_group_name variables are still
+# required but are used for runbook/schedule placement rather than account
+# creation.
+#
+# module "indexoptimize_existing" {
+#   source = "../.."
+#
+#   create_automation_account = false
+#   existing_automation_account_name                = "my-existing-automation-account"
+#   existing_automation_account_resource_group_name = "rg-existing-automation"
+#
+#   name                = "my-existing-automation-account"
+#   location            = "eastus"
+#   resource_group_name = "rg-existing-automation"
+#
+#   enable_index_optimize = true
+#
+#   index_optimize_targets = {
+#     "mydb-weekly" = {
+#       sql_server = "myserver.database.windows.net"
+#       database   = "MyDatabase"
+#       week_days  = ["Saturday"]
+#       start_time = "2026-06-06T03:00:00-04:00"
+#     }
+#   }
+#
+#   tags = {
+#     Example   = "existing-account"
+#     ManagedBy = "Terraform"
+#   }
+# }
+# ---------------------------------------------------------------------------
+
 output "automation_account_name" {
   value       = module.indexoptimize.name
   description = "Use this exact name as the SQL principal in CREATE USER ... FROM EXTERNAL PROVIDER."
