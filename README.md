@@ -199,65 +199,86 @@ Analytics workspace with `log_analytics_destination_type = "Dedicated"`.
 ## Inputs
 
 <!-- BEGIN_TF_DOCS -->
-| Name | Type | Default | Description |
-|---|---|---|---|
-| `name` | `string` | n/a | Automation Account name (6-50 chars, starts with letter, alphanumeric + hyphens). |
-| `location` | `string` | n/a | Azure region. |
-| `resource_group_name` | `string` | n/a | Existing RG. |
-| `create_automation_account` | `bool` | `true` | If false, use an existing account (requires `existing_*` vars). |
-| `existing_automation_account_name` | `string` | `""` | Name of existing account when `create_automation_account = false`. |
-| `existing_automation_account_resource_group_name` | `string` | `""` | RG of existing account when `create_automation_account = false`. |
-| `public_network_access_enabled` | `bool` | `false` | Enable public network access on the Automation Account. |
-| `tags` | `map(string)` | `{}` | Tags applied to all created resources. |
-| `enable_index_optimize` | `bool` | `false` | If true, create the built-in IndexOptimize runbook + auto-import the SqlServer module into the PS 7.x slot. |
-| `index_optimize_targets` | `map(object)` | `{}` | Per-target schedules. See [target shape](#target-shape). |
-| `index_optimize_log_verbose` | `bool` | `false` | Verbose logging on the IndexOptimize runbook. |
-| `index_optimize_log_progress` | `bool` | `false` | Progress logging on the IndexOptimize runbook. |
-| `log_activity_trace_level` | `string` | `"Trace"` | Activity trace level for the IndexOptimize runbook. Allowed: Trace, Debug, Information, Warning, Error, Critical, None. |
-| `schedules` | `map(object)` | `{}` | Caller-supplied schedules; merged with derived schedules from `index_optimize_targets`. |
-| `job_schedules` | `map(object)` | `{}` | Caller-supplied job schedules; merged with derived ones. |
-| `runbooks` | `map(object)` | `{}` | Custom runbooks (PowerShell, PowerShellWorkflow, Python, etc). |
-| `automation_modules` | `map(string)` | `{}` | PS 5.1 modules (URI per name). |
-| `powershell72_modules` | `map(string)` | `{}` | Caller-supplied PS 7.x modules. |
-| `connection_types` | `map(map(string))` | `{}` | Custom connection types. |
-| `service_principal_connections` | `map(object)` | `{}` | SP connection definitions. |
-| `certificates` | `map(object)` | `{}` | Certificate assets. |
-| `teams_webhook_url` | `string` (sensitive) | `""` | If non-empty, deploys a Teams notification webhook. **WARNING:** webhook URLs are stored in Terraform state (`sensitive=true` helps at plan-time but the state file still contains them). |
-| `teams_webhook_expiry` | `string` | `"2030-12-31T00:00:00Z"` | Teams webhook expiry. |
+## Requirements
 
-### Target shape
+| Name | Version |
+|------|---------|
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.9.0 |
+| <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | >= 4.0, < 5.0 |
+| <a name="requirement_local"></a> [local](#requirement\_local) | ~> 2.5 |
 
-```hcl
-index_optimize_targets = {
-  "<key>" = {
-    sql_server  = string  # FQDN, e.g. "myserver.database.windows.net"
-    database    = string  # database name (case-sensitive)
-    week_days   = list(string)  # ["Sunday"], ["Saturday", "Sunday"], etc.
-    start_time  = string  # ISO 8601 with offset, e.g. "2026-06-06T03:00:00-04:00"
-    timezone    = optional(string, "America/New_York")
-    description = optional(string, "")
-  }
-}
-```
+## Providers
 
-Each entry produces a weekly `azurerm_automation_schedule` with key
-`indexoptimize-<key>` and a matching `azurerm_automation_job_schedule` bound
-to the IndexOptimize runbook.
+| Name | Version |
+|------|---------|
+| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | 4.72.0 |
+| <a name="provider_local"></a> [local](#provider\_local) | 2.8.0 |
+
+## Modules
+
+No modules.
+
+## Resources
+
+| Name | Type |
+|------|------|
+| [azurerm_automation_account.default](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/automation_account) | resource |
+| [azurerm_automation_certificate.certificates](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/automation_certificate) | resource |
+| [azurerm_automation_connection_service_principal.service_principal_connections](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/automation_connection_service_principal) | resource |
+| [azurerm_automation_connection_type.connection_types](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/automation_connection_type) | resource |
+| [azurerm_automation_job_schedule.job_schedules](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/automation_job_schedule) | resource |
+| [azurerm_automation_module.modules](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/automation_module) | resource |
+| [azurerm_automation_powershell72_module.modules](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/automation_powershell72_module) | resource |
+| [azurerm_automation_runbook.index_optimize](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/automation_runbook) | resource |
+| [azurerm_automation_runbook.runbooks](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/automation_runbook) | resource |
+| [azurerm_automation_runbook.webhook](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/automation_runbook) | resource |
+| [azurerm_automation_schedule.schedules](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/automation_schedule) | resource |
+| [azurerm_automation_webhook.default](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/automation_webhook) | resource |
+| [azurerm_automation_account.existing](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/data-sources/automation_account) | data source |
+| [local_file.index_optimize](https://registry.terraform.io/providers/hashicorp/local/latest/docs/data-sources/file) | data source |
+| [local_file.teams-webhook](https://registry.terraform.io/providers/hashicorp/local/latest/docs/data-sources/file) | data source |
+
+## Inputs
+
+| Name | Description | Type | Default | Required |
+|------|-------------|------|---------|:--------:|
+| <a name="input_automation_modules"></a> [automation\_modules](#input\_automation\_modules) | A map of PowerShell 5.1 (Windows PowerShell) modules to install in the automation account. Use var.powershell72\_modules for PS7.x runbooks. | `map(string)` | `{}` | no |
+| <a name="input_certificates"></a> [certificates](#input\_certificates) | A map of certificates to create in the automation account. | <pre>map(object({<br/>    base64      = string<br/>    description = optional(string, "")<br/>    exportable  = optional(bool, false)<br/>  }))</pre> | `{}` | no |
+| <a name="input_connection_types"></a> [connection\_types](#input\_connection\_types) | A map of connection types to create in the automation account. | `map(map(string))` | `{}` | no |
+| <a name="input_create_automation_account"></a> [create\_automation\_account](#input\_create\_automation\_account) | Whether to create a new automation account. If false, an existing account is referenced via existing\_automation\_account\_name and existing\_automation\_account\_resource\_group\_name. | `bool` | `true` | no |
+| <a name="input_enable_index_optimize"></a> [enable\_index\_optimize](#input\_enable\_index\_optimize) | If true, create a built-in IndexOptimize runbook (Ola Hallengren) using the bundled script. Auth uses the Automation Account's managed identity. | `bool` | `false` | no |
+| <a name="input_existing_automation_account_name"></a> [existing\_automation\_account\_name](#input\_existing\_automation\_account\_name) | The name of an existing automation account to use when create\_automation\_account is false. | `string` | `""` | no |
+| <a name="input_existing_automation_account_resource_group_name"></a> [existing\_automation\_account\_resource\_group\_name](#input\_existing\_automation\_account\_resource\_group\_name) | The resource group name of an existing automation account to use when create\_automation\_account is false. | `string` | `""` | no |
+| <a name="input_index_optimize_log_progress"></a> [index\_optimize\_log\_progress](#input\_index\_optimize\_log\_progress) | Enable progress logging on the built-in IndexOptimize runbook. Defaults to false. | `bool` | `false` | no |
+| <a name="input_index_optimize_log_verbose"></a> [index\_optimize\_log\_verbose](#input\_index\_optimize\_log\_verbose) | Enable verbose logging on the built-in IndexOptimize runbook. Defaults to false to keep job stream volume manageable. | `bool` | `false` | no |
+| <a name="input_index_optimize_targets"></a> [index\_optimize\_targets](#input\_index\_optimize\_targets) | Per-target IndexOptimize configuration. Map key becomes the schedule/job suffix (indexoptimize-<key>). | <pre>map(object({<br/>    sql_server                            = string<br/>    database                              = string<br/>    week_days                             = list(string)<br/>    start_time                            = string<br/>    timezone                              = optional(string, "America/New_York")<br/>    description                           = optional(string, "")<br/>    fragmentation_level_1                 = optional(number, 5)<br/>    fragmentation_level_2                 = optional(number, 30)<br/>    fragmentation_low                     = optional(string, null)<br/>    fragmentation_medium                  = optional(string, "INDEX_REBUILD_ONLINE")<br/>    fragmentation_high                    = optional(string, "INDEX_REBUILD_ONLINE,INDEX_REBUILD_OFFLINE")<br/>    sort_in_tempdb                        = optional(string, null)<br/>    max_dop                               = optional(number, null)<br/>    fill_factor                           = optional(number, null)<br/>    update_statistics                     = optional(string, "ALL")<br/>    only_modified_statistics              = optional(string, "Y")<br/>    time_limit_minutes                    = optional(number, null)<br/>    wait_at_low_priority_max_duration     = optional(number, 10)<br/>    wait_at_low_priority_abort_after_wait = optional(string, "SELF")<br/>    lock_timeout                          = optional(number, 600)<br/>    lock_message_severity                 = optional(number, 10)<br/>    log_to_table                          = optional(string, "N")<br/>    execute_as_user                       = optional(string, null)<br/>  }))</pre> | `{}` | no |
+| <a name="input_job_schedules"></a> [job\_schedules](#input\_job\_schedules) | A map of job schedules to create in the automation account. Merged with job\_schedules derived from var.index\_optimize\_targets when var.enable\_index\_optimize is true. | <pre>map(object({<br/>    runbook_name  = string<br/>    schedule_name = string<br/>    parameters    = optional(map(string), null)<br/>  }))</pre> | `{}` | no |
+| <a name="input_location"></a> [location](#input\_location) | The location where the automation account should be created. | `string` | n/a | yes |
+| <a name="input_name"></a> [name](#input\_name) | The name of the automation account. | `string` | n/a | yes |
+| <a name="input_powershell72_modules"></a> [powershell72\_modules](#input\_powershell72\_modules) | A map of PowerShell 7.x modules to install in the automation account, keyed by module name with the package URI as the value. Required for any PowerShell72 runbook that imports a module. | `map(string)` | `{}` | no |
+| <a name="input_public_network_access_enabled"></a> [public\_network\_access\_enabled](#input\_public\_network\_access\_enabled) | Whether public network access is enabled for the Automation Account. Defaults to false for security. | `bool` | `false` | no |
+| <a name="input_resource_group_name"></a> [resource\_group\_name](#input\_resource\_group\_name) | The name of the resource group in which to create the automation account. | `string` | n/a | yes |
+| <a name="input_runbooks"></a> [runbooks](#input\_runbooks) | A map of runbooks to create in the automation account. | <pre>map(object({<br/>    runbook_type = string<br/>    description  = optional(string, "")<br/>    content_path = optional(string, "")<br/>    content      = optional(string, "")<br/>    log_verbose  = optional(bool, false)<br/>    log_progress = optional(bool, false)<br/>  }))</pre> | `{}` | no |
+| <a name="input_schedules"></a> [schedules](#input\_schedules) | A map of schedules to create in the automation account. Merged with schedules derived from var.index\_optimize\_targets when var.enable\_index\_optimize is true. | <pre>map(object({<br/>    frequency   = string<br/>    timezone    = string<br/>    week_days   = optional(list(string), null)<br/>    month_days  = optional(list(number), null)<br/>    start_time  = optional(string, null)<br/>    description = optional(string, "")<br/>  }))</pre> | `{}` | no |
+| <a name="input_service_principal_connections"></a> [service\_principal\_connections](#input\_service\_principal\_connections) | A map of service principal connections to create in the automation account. | <pre>map(object({<br/>    application_id         = string<br/>    certificate_thumbprint = string<br/>    subscription_id        = string<br/>    tenant_id              = string<br/>    description            = optional(string, "")<br/>  }))</pre> | `{}` | no |
+| <a name="input_tags"></a> [tags](#input\_tags) | A mapping of tags to assign to the resource. | `map(string)` | `{}` | no |
+| <a name="input_teams_webhook_expiry"></a> [teams\_webhook\_expiry](#input\_teams\_webhook\_expiry) | Expiry timestamp (RFC3339) for the Teams webhook resource. Plan to rotate or extend by 2030-Q3. | `string` | `"2030-12-31T00:00:00Z"` | no |
+| <a name="input_teams_webhook_url"></a> [teams\_webhook\_url](#input\_teams\_webhook\_url) | The URL of the Teams webhook to send notifications to. Treated as a secret - bearer credential. | `string` | `""` | no |
 
 ## Outputs
 
-| Name | Description | Sensitive |
-|---|---|---|
-| `id` | Automation Account resource ID. | no |
-| `name` | Automation Account name. | no |
-| `identity` | Identity block (principal_id, tenant_id). | **yes** |
-| `index_optimize_runbook_name` | Runbook name (or `null` if disabled). | no |
-| `runbooks` | `{id, name}` per custom runbook. | no |
-| `schedules` | `{id, name}` per schedule. | no |
-| `job_schedules` | `{id}` per job schedule. | no |
-| `certificates` | `{id, name}` per certificate. | no |
-| `service_principal_connections` | `{id, name, application_id}` per connection (sensitive). | **yes** |
-| `teams_webhook_uri` | Teams webhook URI (sensitive, `null` if disabled). | **yes** |
+| Name | Description |
+|------|-------------|
+| <a name="output_certificates"></a> [certificates](#output\_certificates) | Certificates - {id, name} per key. |
+| <a name="output_id"></a> [id](#output\_id) | The ID of the Automation Account. |
+| <a name="output_identity"></a> [identity](#output\_identity) | The identity of the Automation Account. |
+| <a name="output_index_optimize_runbook_name"></a> [index\_optimize\_runbook\_name](#output\_index\_optimize\_runbook\_name) | The name of the built-in IndexOptimize runbook (null if not enabled). |
+| <a name="output_job_schedules"></a> [job\_schedules](#output\_job\_schedules) | Job schedules - {id} per key. Job schedules don't have a 'name', they have a job\_schedule\_id (the resource id). |
+| <a name="output_name"></a> [name](#output\_name) | The name of the Automation Account. |
+| <a name="output_runbooks"></a> [runbooks](#output\_runbooks) | Runbooks - {id, name} per key. |
+| <a name="output_schedules"></a> [schedules](#output\_schedules) | Schedules (caller-supplied + index\_optimize-derived) - {id, name} per key. |
+| <a name="output_service_principal_connections"></a> [service\_principal\_connections](#output\_service\_principal\_connections) | Service principal connections - {id, name, application\_id} per key. |
+| <a name="output_teams_webhook_uri"></a> [teams\_webhook\_uri](#output\_teams\_webhook\_uri) | The URI of the Teams webhook, if created. Bearer credential - sensitive. |
 <!-- END_TF_DOCS -->
 
 ## Architecture
