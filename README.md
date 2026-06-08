@@ -18,19 +18,21 @@ Ola version was installed manually months or years ago.
 
 This module takes a different approach:
 
-1. **Per-run install.** A weekly Azure Automation runbook connects to the
-   target Azure SQL Database via the Automation Account's managed identity,
-   runs `CREATE OR ALTER PROCEDURE dbo.IndexOptimize` and `dbo.CommandExecute`
-   from a vendored, version-pinned copy of Ola's source bundled inside the
-   runbook itself.
+1. **Per-run install under app lock.** A weekly Azure Automation runbook
+   connects to the target Azure SQL Database via the Automation Account's
+   managed identity, acquires a per-database SQL application lock, then runs
+   `CREATE OR ALTER PROCEDURE dbo.IndexOptimize` and `dbo.CommandExecute` from
+   a vendored, version-pinned copy of Ola's source bundled inside the runbook
+   itself.
 2. **Sentinel-tagged.** Each installed proc is tagged with extended property
    `ephemeral_runbook_install = '1'`. This is what lets the cleanup phase
    safely cohabit with manual Ola installs — it only drops procs *we* put
    there.
 3. **Run.** `EXECUTE dbo.IndexOptimize @Databases = 'USER_DATABASES', ...`
    with sensible defaults (online rebuild, 2-hour cap, no log table).
-4. **Cleanup in `finally`.** Sentinel-gated `DROP PROCEDURE`. Even if the run
-   crashes, the next scheduled fire's opportunistic startup cleanup self-heals.
+4. **Cleanup in `finally` under the same app lock.** Sentinel-gated
+   `DROP PROCEDURE`. Even if the run crashes, the next scheduled fire's
+   opportunistic startup cleanup self-heals.
 
 ## Headline features
 
@@ -295,11 +297,12 @@ No modules.
 │  │   1. Import-Module SqlServer  (loads Microsoft.Data.SqlClient) │
 │  │   2. Open SqlConnection with                               │  │
 │  │      Authentication=Active Directory Managed Identity      │  │
-│  │   3. Phase 1: opportunistic sentinel-orphan cleanup        │  │
-│  │   4. Phase 2: ownership detection (ours / theirs / absent) │  │
-│  │   5. Phase 3: install (CREATE OR ALTER + sentinel tag)     │  │
-│  │   6. Phase 4: EXECUTE dbo.IndexOptimize ...                │  │
-│  │   7. finally: sentinel-gated DROP PROCEDURE                │  │
+│  │   3. Acquire per-database SQL application lock             │  │
+│  │   4. Phase 1: opportunistic sentinel-orphan cleanup        │  │
+│  │   5. Phase 2: ownership detection (ours / theirs / absent) │  │
+│  │   6. Phase 3: install (CREATE OR ALTER + sentinel tag)     │  │
+│  │   7. Phase 4: EXECUTE dbo.IndexOptimize ...                │  │
+│  │   8. finally: sentinel-gated DROP PROCEDURE + unlock       │  │
 │  └───────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  Schedules (one per target, weekly, staggered)            │  │
@@ -342,22 +345,33 @@ These are documented in source comments but worth highlighting up front:
    `database` (not `SqlServer` / `Database`); the runbook's PS parameter
    binding is case-insensitive on the receive side.
 
-5. **MI principal recreate.** If you ever recreate the Automation Account,
+5. **Optional numeric IndexOptimize parameters keep legacy job keys.** For
+   `max_dop`, `fill_factor`, and `time_limit_minutes`, Terraform preserves the
+   historical empty-string Automation job parameters when the corresponding input
+   is null. This avoids unexpected `azurerm_automation_job_schedule` recreation
+   because its `parameters` argument is ForceNew. The runbook treats blank,
+   invalid, and negative optional numeric values as not supplied. Explicit
+   non-negative `max_dop` and `fill_factor` values, including `0`, are passed to
+   Ola so Ola can enforce parameter-specific validation. When
+   `time_limit_minutes` is set, callers provide minutes and the runbook converts
+   it to seconds before passing Ola's `@TimeLimit`.
+
+6. **MI principal recreate.** If you ever recreate the Automation Account,
    the new MI gets a new AAD object id but the same display name. The
    existing `CREATE USER ... FROM EXTERNAL PROVIDER` SQL principal binds to
    the *old* object id and breaks. Fix: `DROP USER ...; CREATE USER ... FROM
    EXTERNAL PROVIDER; ALTER ROLE db_owner ADD MEMBER ...` on every target DB.
 
-6. **Schedule `start_time` is `ignore_changes`d.** The provider has a
+7. **Schedule `start_time` is `ignore_changes`d.** The provider has a
    timezone+offset round-trip drift bug; we hide it. To actually update a
    schedule's start time, taint or `-replace=` it.
 
-7. **Webhook URLs in state.** `teams_webhook_url` is marked `sensitive` so it
+8. **Webhook URLs in state.** `teams_webhook_url` is marked `sensitive` so it
    does not appear in plan output, but Terraform state files are not encrypted
    by default. Store state in a secure backend (e.g., Azure Storage with
    encryption, Terraform Cloud) and restrict access.
 
-8. **Public network access is disabled by default.** New Automation Accounts
+9. **Public network access is disabled by default.** New Automation Accounts
    are created with `public_network_access_enabled = false`. Enable only if
    your runbooks need to reach public endpoints and you are not using
    private endpoints.

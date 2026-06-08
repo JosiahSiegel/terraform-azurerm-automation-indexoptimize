@@ -22,6 +22,15 @@ All notable changes to this module are documented here. The format follows
 - Terraform `required_version` bumped from `>= 1.5.0` to `>= 1.9.0` in root,
   `examples/minimal/`, and `modules/failure-alert/`.
 - `identity` output now marked `sensitive = true`.
+- Serialize IndexOptimize install/run/cleanup with a per-database SQL
+  application lock to prevent overlapping runs from racing on ephemeral Ola
+  procedures.
+- Preserve legacy empty-string `maxdop`, `fillfactor`, and `timelimitminutes`
+  Automation job schedule parameters when inputs are null to avoid ForceNew
+  recreation, while the runbook treats blank, invalid, and negative optional
+  numeric values as not supplied.
+- Convert `time_limit_minutes` from caller-supplied minutes to Ola
+  `@TimeLimit` seconds before execution.
 
 ### Security
 - Default `public_network_access_enabled = false` on new Automation Accounts.
