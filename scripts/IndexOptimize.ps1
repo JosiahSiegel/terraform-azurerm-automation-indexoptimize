@@ -74,11 +74,11 @@ param (
     [string] $FragmentationMedium                = "INDEX_REBUILD_ONLINE",
     [string] $FragmentationHigh                  = "INDEX_REBUILD_ONLINE,INDEX_REBUILD_OFFLINE",
     [string] $SortInTempdb                       = "",
-    [int]    $MaxDOP                             = -1,
-    [int]    $FillFactor                         = -1,
+    [string] $MaxDOP                             = "",
+    [string] $FillFactor                         = "",
     [string] $UpdateStatistics                   = "ALL",
     [string] $OnlyModifiedStatistics             = "Y",
-    [int]    $TimeLimitMinutes                   = -1,
+    [string] $TimeLimitMinutes                   = "",
     [int]    $WaitAtLowPriorityMaxDuration       = 10,
     [string] $WaitAtLowPriorityAbortAfterWait    = "SELF",
     [int]    $LockTimeout                        = 600,
@@ -93,12 +93,28 @@ $ErrorActionPreference = 'Stop'
 $SentinelName  = 'ephemeral_runbook_install'
 $SentinelValue = '1'
 
-# IndexOptimize @TimeLimit is in minutes; .NET CommandTimeout is in seconds.
-# Cap the index defrag at 2 hours: Ola exits gracefully at @TimeLimit, and the
-# .NET CommandTimeout has a small buffer above so the connection isn't killed
-# mid-graceful-exit.
-$IndexOptimizeTimeLimitMinutes = $TimeLimitMinutes -ge 0 ? $TimeLimitMinutes : 120    # 2 hours - Ola's internal cap
-$SqlCommandTimeoutSeconds      = 7800   # 130 min - .NET cap, 10 min buffer
+# Serialize install/run/cleanup per target database so concurrent manual starts or
+# overlapping schedules cannot race on the ephemeral Ola procedures.
+$AppLockResource = "IndexOptimize:$SqlServer/$Database"
+$AppLockTimeoutMilliseconds = 600000
+
+# Runbook TimeLimitMinutes is minutes, but Ola IndexOptimize @TimeLimit and
+# .NET CommandTimeout are seconds. Cap the index defrag at 2 hours by default:
+# Ola exits gracefully at @TimeLimit, and the .NET CommandTimeout has a small
+# buffer above so the connection isn't killed mid-graceful-exit.
+$ParsedTimeLimitMinutes = 0
+$EffectiveTimeLimitMinutes = ([int]::TryParse($TimeLimitMinutes, [ref]$ParsedTimeLimitMinutes) -and $ParsedTimeLimitMinutes -ge 0) ? $ParsedTimeLimitMinutes : 120
+$IndexOptimizeTimeLimitSeconds = $EffectiveTimeLimitMinutes * 60
+$SqlCommandTimeoutSeconds      = $IndexOptimizeTimeLimitSeconds + 600
+
+# Optional numeric parameters are strings so legacy Terraform empty-string job
+# parameters are not coerced by PowerShell into 0. Blank, invalid, and negative
+# values are treated as not supplied. Explicit zero is preserved and passed to
+# Ola, allowing Ola to validate parameter-specific ranges such as FillFactor.
+$ParsedMaxDOP = 0
+$EffectiveMaxDOP = ([int]::TryParse($MaxDOP, [ref]$ParsedMaxDOP) -and $ParsedMaxDOP -ge 0) ? $ParsedMaxDOP : $null
+$ParsedFillFactor = 0
+$EffectiveFillFactor = ([int]::TryParse($FillFactor, [ref]$ParsedFillFactor) -and $ParsedFillFactor -ge 0) ? $ParsedFillFactor : $null
 
 # ---------- Embedded Ola SQL (MIT, copyright (c) 2025 Ola Hallengren) ---------
 # These two here-strings hold the CREATE-then-ALTER blocks lifted from Ola's
@@ -3041,6 +3057,59 @@ END
     }
 }
 
+function Invoke-WithSqlAppLock {
+    # Holds an exclusive SQL application lock for the full install/run/cleanup
+    # critical section. The lock is scoped to the current database and connection
+    # session, so concurrent starts for the same target serialize while unrelated
+    # databases can run independently.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [Microsoft.Data.SqlClient.SqlConnection] $Connection,
+        [Parameter(Mandatory)] [string] $Resource,
+        [Parameter(Mandatory)] [scriptblock] $ScriptBlock
+    )
+
+    $acquire = $Connection.CreateCommand()
+    $acquire.CommandText = @"
+DECLARE @result int;
+EXEC @result = sys.sp_getapplock
+    @Resource = @resource,
+    @LockMode = 'Exclusive',
+    @LockOwner = 'Session',
+    @LockTimeout = @timeout;
+SELECT @result;
+"@
+    [void]$acquire.Parameters.AddWithValue('@resource', $Resource)
+    [void]$acquire.Parameters.AddWithValue('@timeout', $AppLockTimeoutMilliseconds)
+    $lockResult = [int]$acquire.ExecuteScalar()
+    if ($lockResult -lt 0) {
+        throw "Failed to acquire SQL application lock '$Resource' within $AppLockTimeoutMilliseconds ms (sp_getapplock result $lockResult)."
+    }
+
+    Write-Output "Acquired SQL application lock '$Resource' (sp_getapplock result $lockResult)."
+    try {
+        & $ScriptBlock
+    }
+    finally {
+        try {
+            $release = $Connection.CreateCommand()
+            $release.CommandText = @"
+DECLARE @result int;
+EXEC @result = sys.sp_releaseapplock
+    @Resource = @resource,
+    @LockOwner = 'Session';
+SELECT @result;
+"@
+            [void]$release.Parameters.AddWithValue('@resource', $Resource)
+            $releaseResult = [int]$release.ExecuteScalar()
+            Write-Output "Released SQL application lock '$Resource' (sp_releaseapplock result $releaseResult)."
+        }
+        catch {
+            Write-Warning "Failed to release SQL application lock '$Resource' explicitly; closing the SQL session will release session-owned locks: $_"
+        }
+    }
+}
+
 # ---------- Managed-identity auth ----------
 # We rely on Microsoft.Data.SqlClient (shipped by the SqlServer PS module) and
 # its native 'Active Directory Managed Identity' authentication mode. The
@@ -3081,33 +3150,35 @@ try {
 
     Write-Output "Connected to $SqlServer / $Database as managed identity."
 
-    # --- Phase 1: opportunistic cleanup of sentinel-tagged orphans ---
-    Write-Output 'Phase 1: opportunistic cleanup of any sentinel-tagged orphans from a prior failed run.'
-    Remove-OlaProcsIfOurs -Connection $conn
+    Invoke-WithSqlAppLock -Connection $conn -Resource $AppLockResource -ScriptBlock {
+        try {
+            # --- Phase 1: opportunistic cleanup of sentinel-tagged orphans ---
+            Write-Output 'Phase 1: opportunistic cleanup of any sentinel-tagged orphans from a prior failed run.'
+            Remove-OlaProcsIfOurs -Connection $conn
 
-    # --- Phase 2: detect ownership state for both procs ---
-    $ioOwn = Get-ProcOwnership -Connection $conn -ProcName 'IndexOptimize'
-    $ceOwn = Get-ProcOwnership -Connection $conn -ProcName 'CommandExecute'
-    Write-Output ("Phase 2: ownership state - IndexOptimize={0}, CommandExecute={1}" -f $ioOwn, $ceOwn)
+            # --- Phase 2: detect ownership state for both procs ---
+            $ioOwn = Get-ProcOwnership -Connection $conn -ProcName 'IndexOptimize'
+            $ceOwn = Get-ProcOwnership -Connection $conn -ProcName 'CommandExecute'
+            Write-Output ("Phase 2: ownership state - IndexOptimize={0}, CommandExecute={1}" -f $ioOwn, $ceOwn)
 
-    if ($ioOwn -eq 'theirs' -or $ceOwn -eq 'theirs') {
-        # Manual install detected on at least one proc. Use what's there;
-        # don't drop anything that wasn't installed by us.
-        Write-Output 'Detected pre-existing manual Ola install; using existing procs and skipping cleanup.'
-        $weInstalled = $false
-    }
-    else {
-        # --- Phase 3: install + tag ---
-        Write-Output 'Phase 3: installing CommandExecute and IndexOptimize from embedded vendored Ola source.'
-        Invoke-SqlScript  -Connection $conn -Script $CommandExecuteSql
-        Invoke-SqlScript  -Connection $conn -Script $IndexOptimizeSql
-        Add-OlaSentinel   -Connection $conn -ProcName 'CommandExecute'
-        Add-OlaSentinel   -Connection $conn -ProcName 'IndexOptimize'
-        $weInstalled = $true
-    }
+            if ($ioOwn -eq 'theirs' -or $ceOwn -eq 'theirs') {
+                # Manual install detected on at least one proc. Use what's there;
+                # don't drop anything that wasn't installed by us.
+                Write-Output 'Detected pre-existing manual Ola install; using existing procs and skipping cleanup.'
+                $weInstalled = $false
+            }
+            else {
+                # --- Phase 3: install + tag ---
+                Write-Output 'Phase 3: installing CommandExecute and IndexOptimize from embedded vendored Ola source.'
+                Invoke-SqlScript  -Connection $conn -Script $CommandExecuteSql
+                Invoke-SqlScript  -Connection $conn -Script $IndexOptimizeSql
+                Add-OlaSentinel   -Connection $conn -ProcName 'CommandExecute'
+                Add-OlaSentinel   -Connection $conn -ProcName 'IndexOptimize'
+                $weInstalled = $true
+            }
 
-    # --- Phase 4: run IndexOptimize ---
-    Write-Output "Phase 4: executing dbo.IndexOptimize against $Database on $SqlServer."
+            # --- Phase 4: run IndexOptimize ---
+            Write-Output "Phase 4: executing dbo.IndexOptimize against $Database on $SqlServer."
 
     # Build optional parameter fragments. Empty string / -1 means omit so Ola
     # uses its own default.
@@ -3115,15 +3186,15 @@ try {
     $optFragmentationMedium             = ($FragmentationMedium             -ne '') ? "@FragmentationMedium             = '$FragmentationMedium',"             : ""
     $optFragmentationHigh               = ($FragmentationHigh               -ne '') ? "@FragmentationHigh               = '$FragmentationHigh',"               : ""
     $optSortInTempdb                    = ($SortInTempdb                    -ne '') ? "@SortInTempdb                    = '$SortInTempdb',"                    : ""
-    $optMaxDOP                          = ($MaxDOP                          -ge 0)  ? "@MaxDOP                          = $MaxDOP,"                          : ""
-    $optFillFactor                      = ($FillFactor                      -ge 0)  ? "@FillFactor                      = $FillFactor,"                      : ""
+    $optMaxDOP                          = ($null -ne $EffectiveMaxDOP)       ? "@MaxDOP                          = $EffectiveMaxDOP,"                  : ""
+    $optFillFactor                      = ($null -ne $EffectiveFillFactor)   ? "@FillFactor                      = $EffectiveFillFactor,"              : ""
     $optUpdateStatistics                = ($UpdateStatistics                -ne '') ? "@UpdateStatistics                = '$UpdateStatistics',"                : ""
     $optOnlyModifiedStatistics          = ($OnlyModifiedStatistics          -ne '') ? "@OnlyModifiedStatistics          = '$OnlyModifiedStatistics',"          : ""
     $optWaitAtLowPriorityMaxDuration    = ($WaitAtLowPriorityMaxDuration    -ge 0)  ? "@WaitAtLowPriorityMaxDuration    = $WaitAtLowPriorityMaxDuration,"    : ""
     $optWaitAtLowPriorityAbortAfterWait = ($WaitAtLowPriorityAbortAfterWait -ne '') ? "@WaitAtLowPriorityAbortAfterWait = '$WaitAtLowPriorityAbortAfterWait'," : ""
     $optLockTimeout                     = ($LockTimeout                     -ge 0)  ? "@LockTimeout                     = $LockTimeout,"                     : ""
     $optLockMessageSeverity             = ($LockMessageSeverity             -ge 0)  ? "@LockMessageSeverity             = $LockMessageSeverity,"             : ""
-    $optTimeLimit                       = "@TimeLimit                       = $IndexOptimizeTimeLimitMinutes,"
+    $optTimeLimit                       = "@TimeLimit                       = $IndexOptimizeTimeLimitSeconds,"
     $optLogToTable                      = ($LogToTable                      -ne '') ? "@LogToTable                      = '$LogToTable',"                      : ""
     $optExecuteAsUser                   = ($ExecuteAsUser                   -ne '') ? "@ExecuteAsUser                   = '$ExecuteAsUser',"                   : ""
 
@@ -3151,8 +3222,24 @@ EXECUTE dbo.IndexOptimize
     $optFillFactor
     @Execute                         = 'Y';
 "@
-    Invoke-SqlBatch -Connection $conn -Sql $indexOptimizeCall -TimeoutSeconds $SqlCommandTimeoutSeconds
-    Write-Output 'IndexOptimize completed successfully.'
+            Invoke-SqlBatch -Connection $conn -Sql $indexOptimizeCall -TimeoutSeconds $SqlCommandTimeoutSeconds
+            Write-Output 'IndexOptimize completed successfully.'
+        }
+        finally {
+            if ($weInstalled) {
+                Write-Output 'Cleanup: dropping sentinel-tagged procs we installed this run.'
+                try {
+                    Remove-OlaProcsIfOurs -Connection $conn
+                }
+                catch {
+                    Write-Warning "Cleanup drop failed (procs may persist with sentinel tag; next run's Phase 1 will retry): $_"
+                }
+            }
+            else {
+                Write-Output 'Cleanup: skipped (using pre-existing manual install or no install occurred).'
+            }
+        }
+    }
 }
 catch {
     # Write-Output (not Write-Error) so the breadcrumb survives without
@@ -3162,18 +3249,6 @@ catch {
     throw
 }
 finally {
-    if ($weInstalled) {
-        Write-Output 'Cleanup: dropping sentinel-tagged procs we installed this run.'
-        try {
-            Remove-OlaProcsIfOurs -Connection $conn
-        }
-        catch {
-            Write-Warning "Cleanup drop failed (procs may persist with sentinel tag; next run's Phase 1 will retry): $_"
-        }
-    }
-    else {
-        Write-Output 'Cleanup: skipped (using pre-existing manual install or no install occurred).'
-    }
     if ($conn) {
         if ($conn.State -eq [System.Data.ConnectionState]::Open) { $conn.Close() }
         $conn.Dispose()

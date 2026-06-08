@@ -240,8 +240,8 @@ locals {
       parameters = {
         sqlserver                       = t.sql_server
         database                        = t.database
-        fragmentationlevel1             = t.fragmentation_level_1
-        fragmentationlevel2             = t.fragmentation_level_2
+        fragmentationlevel1             = tostring(t.fragmentation_level_1)
+        fragmentationlevel2             = tostring(t.fragmentation_level_2)
         fragmentationlow                = t.fragmentation_low == null ? "" : t.fragmentation_low
         fragmentationmedium             = t.fragmentation_medium
         fragmentationhigh               = t.fragmentation_high
@@ -251,10 +251,10 @@ locals {
         updatestatistics                = t.update_statistics
         onlymodifiedstatistics          = t.only_modified_statistics
         timelimitminutes                = t.time_limit_minutes == null ? "" : tostring(t.time_limit_minutes)
-        waitatlowprioritymaxduration    = t.wait_at_low_priority_max_duration
+        waitatlowprioritymaxduration    = tostring(t.wait_at_low_priority_max_duration)
         waitatlowpriorityabortafterwait = t.wait_at_low_priority_abort_after_wait
-        locktimeout                     = t.lock_timeout
-        lockmessageseverity             = t.lock_message_severity
+        locktimeout                     = tostring(t.lock_timeout)
+        lockmessageseverity             = tostring(t.lock_message_severity)
         logtotable                      = t.log_to_table
         executeasuser                   = t.execute_as_user == null ? "" : t.execute_as_user
       }
